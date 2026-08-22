@@ -1,0 +1,100 @@
+Instructivo: probar el stream de audio ESP32-P4
+================================================
+
+Que hace el script
+------------------
+udp_audio_player.py escucha UDP en esta notebook, decodifica el paquete
+del firmware (header AU + PCM s16le) y lo reproduce por los parlantes.
+Al arrancar imprime las IPv4 locales para copiarlas en dest_ip del ESP.
+
+
+1. Requisitos (una sola vez)
+----------------------------
+Desde la raiz del proyecto:
+
+    python3 -m venv tools/.venv
+    tools/.venv/bin/pip install -r tools/requirements.txt
+
+En Linux hace falta PortAudio:
+
+    sudo apt install libportaudio2
+
+
+2. Arrancar el receptor ANTES de flashear / resetear el ESP
+-----------------------------------------------------------
+Desde la raiz del proyecto:
+
+    tools/.venv/bin/python tools/udp_audio_player.py --port 5000 --rate 48000 --headphones
+
+    --rate debe coincidir con BSP_SPH0645_SAMPLE_RATE_HZ en bsp_audio.c
+    (hoy 48000; tambien 16000 | 44100).
+
+El script va a mostrar algo como:
+
+    IP de esta notebook (dest_ip del firmware ESP32-P4)
+      wlan0        192.168.1.42  <-- usar esta
+
+      Copiar en main.c:
+        .dest_ip   = "192.168.1.42",
+        .dest_port = 5000,
+
+Deja esa terminal abierta. Ctrl+C para salir.
+
+
+3. Poner esa IP en el firmware
+------------------------------
+Archivo: main/main.c
+
+    audio_udp_streamer_config_t streamer_cfg =
+    {
+        .dest_ip = "192.168.1.42",   /* IP que mostro el script */
+        .dest_port = 5000,           /* mismo --port del script */
+        ...
+    };
+
+sample_rate_hz del BSP tiene que coincidir con --rate.
+Notebook y ESP tienen que estar en la misma red WiFi.
+
+
+4. Compilar, flashear y resetear el ESP
+---------------------------------------
+    idf.py build flash monitor
+
+En el log del ESP deberia aparecer:
+    UDP stream -> 192.168.1.42:5000
+    Pipeline ready ...
+
+
+5. Verificar en la notebook
+---------------------------
+Cuando llegan paquetes el script imprime stats cada ~2 s:
+
+    pkts=...  lost=...  rate=... kbps
+
+- pkts subiendo  -> el ESP esta enviando y llega UDP
+- lost subiendo  -> datagramas perdidos (WiFi / MTU)
+- se escucha audio por el dispositivo default (PipeWire)
+
+Otras formas de correrlo:
+
+    # listar salidas de audio
+    tools/.venv/bin/python tools/udp_audio_player.py --list-devices
+
+    # forzar un dispositivo (ej. analogico ALC233)
+    tools/.venv/bin/python tools/udp_audio_player.py --device 4
+
+    # grabar WAV mientras reproduce
+    tools/.venv/bin/python tools/udp_audio_player.py --save capture.wav
+
+    # solo recibir / grabar, sin parlantes
+    tools/.venv/bin/python tools/udp_audio_player.py --no-play --save capture.wav
+
+
+Si no llega audio
+-----------------
+- dest_ip no es la IP actual de la notebook (DHCP puede cambiarla)
+- dest_port distinto de --port
+- notebook y ESP en SSIDs distintos
+- firewall local bloqueando UDP 5000
+- el script no estaba escuchando cuando el ESP empezo a streamear
+  (reiniciar el ESP con el player ya abierto)

@@ -1,0 +1,20 @@
+# Dependencias gestionadas por el IDF Component Manager.
+# Verificar versiones exactas disponibles con:
+#   idf.py add-dependency "espressif/esp_video"
+#   idf.py add-dependency "espressif/esp_wifi_remote"
+#   idf.py add-dependency "espressif/esp_hosted"
+dependencies:
+  idf:
+    version: ">=5.5"
+
+  # El ESP32-P4 no tiene radio Wi-Fi propia: estos dos componentes
+  # oficiales dan Wi-Fi "remoto" a traves del coprocesador ESP32-C6/C2
+  # (SDIO o SPI). La API de aplicacion (esp_wifi_*) no cambia.
+  # OJO: el soporte para IDF v6.0 en esp_wifi_remote (carpeta idf_v6.0/)
+  # se agrego recien en la serie 1.1.x. Un rango ^0.x resuelve una
+  # version vieja sin esa carpeta y el build falla buscando
+  # esp_wifi_remote_weak.c. Por eso se pide >=1.1.0.
+  espressif/esp_wifi_remote:
+    version: "^1.1.0"
+  espressif/esp_hosted:
+    version: "^2.0.0"
