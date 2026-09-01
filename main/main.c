@@ -9,6 +9,8 @@
 #include "audio_udp_streamer.h"
 
 static const char *TAG = "[AUDIO_CAPTURE_APP]";
+#define ACTIVE_MICS			(4)
+
 
 void app_main(void)
 {
@@ -29,11 +31,23 @@ void app_main(void)
 	bsp_audio_mic_format_t mic_fmt;
 	bsp_audio_get_mic_format(&mic_fmt);
 
-	/* ~20 ms por bloque: 320@16k, 882@44.1k, 960@48k. */
+	/* ~20 ms por bloque, alineado a frames UDP (173 samp/ch × 6 pkts ≈ 21.6 ms @ 48k). */
+	const uint8_t active_mic_count = ACTIVE_MICS;
 	uint16_t block_samples = (uint16_t)(mic_fmt.sample_rate_hz / 50u);
 	if (block_samples < 160u)
 	{
 		block_samples = 160u;
+	}
+	/* 4ch: 173 frames/paquete × 6 paquetes = 1038 → menos syscalls sendto por bloque */
+	if (active_mic_count == 4)
+	{
+		const uint16_t udp_frames_per_pkt = 173u;
+		const uint16_t pkts_per_block = 6u;
+		uint16_t aligned = udp_frames_per_pkt * pkts_per_block;
+		if (aligned > block_samples)
+		{
+			block_samples = aligned;
+		}
 	}
 
 	bsp_audio_config_t audio_cfg =
@@ -41,8 +55,8 @@ void app_main(void)
 		.sample_rate_hz = mic_fmt.sample_rate_hz,
 		.slot_bit_width = mic_fmt.slot_bit_width,
 		.block_size_samples = block_samples,
-		.pool_block_count = 6,
-		.active_mic_count = 2,
+		.active_mic_count = active_mic_count,
+		.pool_block_count = 10,
 	};
 
 	bsp_audio_handle_t audio_bsp = NULL;

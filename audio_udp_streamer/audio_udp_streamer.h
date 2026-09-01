@@ -32,7 +32,7 @@
  * Max UDP payload (header + PCM). Kept under typical Wi-Fi/hosted MTU
  * to avoid IP fragmentation.
  */
-#define AUDIO_UDP_MAX_PAYLOAD           (1200u)
+#define AUDIO_UDP_MAX_PAYLOAD           (1400u)
 /******************************************************************************
         Data types
 ******************************************************************************/

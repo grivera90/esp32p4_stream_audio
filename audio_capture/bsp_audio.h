@@ -52,9 +52,9 @@ typedef struct
 
 typedef struct
 {
-	uint8_t data_bits;			/**< Precisión útil (SPH0645: 18) */
-	uint8_t lsb_padding_bits;		/**< 18-bit left-justified in slot 32 → 14 */
-	uint32_t bclk_hz;			/**< Datasheet Typ fCLOCK = 3.072 MHz */
+	uint8_t data_bits;				/**< Precisión útil (SPH0645: 18) */
+	uint8_t lsb_padding_bits;		/**< Right-shift raw i32→PCM: SPH0645=14, INMP441=12 (8 pad+4 headroom) */
+	uint32_t bclk_hz;				/**< Datasheet Typ fCLOCK = 3.072 MHz */
 	uint32_t sample_rate_hz;		/**< Datasheet Typ Fs = bclk / 64 = 48 kHz */
 	uint8_t slot_bit_width;			/**< OSR=64, stereo → 32 bits/slot */
 

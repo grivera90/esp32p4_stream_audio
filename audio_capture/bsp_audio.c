@@ -37,13 +37,10 @@ static const char *TAG = "[BSP_AUDIO]";
 /********************************************** 
 	CHOICE MICS     						  *
 **********************************************/
-#define BSP_MIC_TYPE						(BSP_MIC_SPH0645)
-/*
- * Prueba A/B SPH0645 (OSR 64 → BCLK = Fs * 64):
- *   16000  |  44100  |  48000 (datasheet typ)
- * Con XTAL 40 MHz, 44100 puede quedar aproximado; 16k/48k exactos.
- */
+#define BSP_MIC_TYPE						(BSP_MIC_INMP441) /* (BSP_MIC_SPH0645) */ 
+
 #define BSP_SPH0645_SAMPLE_RATE_HZ			(48000u)
+#define BSP_INMP441_SAMPLE_RATE_HZ			(48000u)
 /********************************************** 
 	MIC 0 and MIC 1							  *
 **********************************************/
@@ -53,9 +50,9 @@ static const char *TAG = "[BSP_AUDIO]";
 /********************************************** 
 	MIC 2 and MIC 3							  *
 **********************************************/
-#define BSP_BUS1_BCLK_GPIO      			(48)   /* Puente PCB con GPIO 4 */
-#define BSP_BUS1_WS_GPIO        			(53)   /* Puente PCB con GPIO 5 */
-#define BSP_BUS1_DIN_GPIO       			(47)
+#define BSP_BUS1_BCLK_GPIO      			(6)   /* Puente PCB con GPIO 4 */
+#define BSP_BUS1_WS_GPIO        			(4)   /* Puente PCB con GPIO 5 */
+#define BSP_BUS1_DIN_GPIO       			(5)
 /********************************************** 
 	MICS CONTROL							  *
 **********************************************/
@@ -64,6 +61,8 @@ static const char *TAG = "[BSP_AUDIO]";
 #define BSP_MIC_PWR_ACTIVE_HIGH 			true
 
 #define GPIO_BIT_MASK(pin)  (((pin) >= 0) ? (1ULL << (pin)) : 0ULL)
+#define BSP_CAPTURE_TASK_PRIO				(tskIDLE_PRIORITY + 5)
+#define BSP_CAPTURE_DROP_LOG_PERIOD_MS		(5000)
 /******************************************************************************
     Data types
 ******************************************************************************/
@@ -82,13 +81,13 @@ struct bsp_audio_handle_s
 /******************************************************************************
     Local variables
 ******************************************************************************/
-/* INMP441: 24-bit useful in 32-bit slot; Fs típico 48 kHz. */
+/* INMP441 x2 en bus0 L/R: 24-bit en slot 32 Philips; streamer >>12 (8 pad + 4 headroom int16). */
 static const bsp_audio_mic_format_t s_mic_params_inmp441 =
 {
 	.data_bits = 24, 
-	.lsb_padding_bits = 0, 
-	.bclk_hz = 3072000, 
-	.sample_rate_hz = 48000, 
+	.lsb_padding_bits = 14, 
+	.bclk_hz = BSP_INMP441_SAMPLE_RATE_HZ * (64u), 
+	.sample_rate_hz = BSP_INMP441_SAMPLE_RATE_HZ, 
 	.slot_bit_width = 32
 };
 /* SPH0645LM4H-B: 18-bit left-justified in slot 32; OSR 64 → BCLK = Fs * 64. */
@@ -104,8 +103,12 @@ static const bsp_audio_mic_format_t s_mic_params_sph0645 =
     Local function prototypes
 ******************************************************************************/
 static const bsp_audio_mic_format_t *bsp_get_mic_params (bsp_mic_type_t type);
+static const char *bsp_mic_type_name (void);
 static i2s_std_slot_config_t bsp_slot_cfg_for_mic (void);
-static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz);
+
+// static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz);
+static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz, i2s_role_t role);
+
 static void bsp_i2s_apply_sph0645_rx_delay (i2s_dev_t *hw);
 static void bsp_i2s_capture_task (void *arg);
 /******************************************************************************
@@ -116,37 +119,24 @@ static const bsp_audio_mic_format_t *bsp_get_mic_params (bsp_mic_type_t type)
 	return (type == BSP_MIC_SPH0645) ? &s_mic_params_sph0645 : &s_mic_params_inmp441;
 }
 
+static const char *bsp_mic_type_name (void)
+{
+	return (BSP_MIC_TYPE == BSP_MIC_SPH0645) ? "SPH0645" : "INMP441";
+}
+
 static i2s_std_slot_config_t bsp_slot_cfg_for_mic (void)
 {
 	const bsp_audio_mic_format_t *p = bsp_get_mic_params(BSP_MIC_TYPE);
 	i2s_data_bit_width_t data_width = (p->slot_bit_width >= 32) ? I2S_DATA_BIT_WIDTH_32BIT : I2S_DATA_BIT_WIDTH_24BIT;
 
-	/*
-	 * t02: Philips (bit_shift=1) + rx_sd_in_dm=2. Equiv. atomic14/RoSchmi en P4.
-	 */
-	if (BSP_MIC_TYPE == BSP_MIC_SPH0645)
-	{
-		i2s_std_slot_config_t slot = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(data_width, I2S_SLOT_MODE_STEREO);
-		slot.slot_bit_width = (i2s_slot_bit_width_t)p->slot_bit_width;
-		slot.ws_width = p->slot_bit_width;
-		return slot;
-	}
-
+	/* Philips stereo 32-bit/slot: SPH0645 e INMP441 en breakouts tipicos. */
 	i2s_std_slot_config_t slot = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(data_width, I2S_SLOT_MODE_STEREO);
 	slot.slot_bit_width = (i2s_slot_bit_width_t)p->slot_bit_width;
 	slot.ws_width = p->slot_bit_width;
 	return slot;
 }
 
-static void bsp_i2s_apply_sph0645_rx_delay (i2s_dev_t *hw)
-{
-	/* 2 = delay SD por flanco neg. (ESP32 clasico: I2S_TIMING_REG BIT(9)). */
-	uint32_t timing = hw->rx_timing.val;
-	timing &= ~0x3u;
-	timing |= 2u;
-	hw->rx_timing.val = timing;
-}
-
+#if 0
 static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz)
 {
 	/* P4 rev < 3: PLL_F160M no es fuente I2S valida; XTAL 40 MHz si. */
@@ -154,6 +144,40 @@ static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz)
 	clk.clk_src = I2S_CLK_SRC_XTAL;
 	clk.mclk_multiple = I2S_MCLK_MULTIPLE_256;
 	return clk;
+}
+#else
+static i2s_std_clk_config_t bsp_clk_cfg_for_mic (uint32_t sample_rate_hz, i2s_role_t role)
+{
+	/*
+	 * P4 rev < 3 (sin PLL_F160M): XTAL 40 MHz alcanza para Master (MCLK=Fs*256=12.288 MHz).
+	 * Slave std a 48 kHz stereo/32-bit: MCLK = BCLK*bclk_div = 3.072M*8 = 24.576 MHz.
+	 * Con XTAL, IDF exige sclk > mclk*1.99 (~48.9 MHz) y falla el init.
+	 * NO usar I2S_CLK_SRC_EXTERNAL: configura entrada MCLK por pin y rx_update queda colgado
+	 * si MCLK no esta cableado (WDT en i2s_ll_rx_update).
+	 * APLL da sclk ~49 MHz y pasa la validacion; BCLK/WS del slave siguen viniendo del puente HW.
+	 */
+	i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate_hz);
+	if (role == I2S_ROLE_SLAVE)
+	{
+		clk.clk_src = I2S_CLK_SRC_APLL;
+		clk.bclk_div = 8;
+	}
+	else
+	{
+		clk.clk_src = I2S_CLK_SRC_XTAL;
+		clk.mclk_multiple = I2S_MCLK_MULTIPLE_256;
+	}
+	return clk;
+}
+#endif
+
+static void bsp_i2s_apply_sph0645_rx_delay (i2s_dev_t *hw)
+{
+	/* SPH0645 en P4: rx_sd_in_dm=2 tras enable (ESP32 clasico: I2S_TIMING BIT(9)). */
+	uint32_t timing = hw->rx_timing.val;
+	timing &= ~0x3u;
+	timing |= 2u;
+	hw->rx_timing.val = timing;
 }
 
 static void bsp_i2s_capture_task (void *arg)
@@ -171,6 +195,9 @@ static void bsp_i2s_capture_task (void *arg)
         vTaskDelete(NULL);
         return;
     }
+
+	uint32_t drop_count = 0;
+	TickType_t last_drop_log = xTaskGetTickCount();
 
     while (dev->running) 
 	{
@@ -208,6 +235,17 @@ static void bsp_i2s_capture_task (void *arg)
 
                 xQueueSend(dev->ready_queue, &blk, portMAX_DELAY);
             }
+			else
+			{
+				drop_count++;
+				TickType_t now = xTaskGetTickCount();
+				if ((now - last_drop_log) >= pdMS_TO_TICKS(BSP_CAPTURE_DROP_LOG_PERIOD_MS))
+				{
+					ESP_LOGW(TAG, "Pool lleno: %lu bloques descartados (subir pool_block_count o bajar carga UDP)", (unsigned long)drop_count);
+					drop_count = 0;
+					last_drop_log = now;
+				}
+			}
         }
     }
 
@@ -283,7 +321,7 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
 
     i2s_std_config_t std_cfg0 = 
 	{
-        .clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz),
+        .clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz, I2S_ROLE_MASTER),
         .slot_cfg = bsp_slot_cfg_for_mic(),
         .gpio_cfg = 
 		{
@@ -300,6 +338,7 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
 			},
         },
     };
+	
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(dev->rx_bus0, &std_cfg0), TAG, "Error std mode I2S 0");
 
     /* 3. Configurar I2S Bus 1 (Slave Sync) -> Solo si active_mic_count == 4 */
@@ -310,7 +349,7 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
 
         i2s_std_config_t std_cfg1 = 
 		{
-            .clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz),
+            .clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz, I2S_ROLE_SLAVE),
             .slot_cfg = bsp_slot_cfg_for_mic(),
             .gpio_cfg = 
 			{
@@ -327,6 +366,7 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
 				},
             },
         };
+		
         ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(dev->rx_bus1, &std_cfg1), TAG, "Error std mode I2S 1");
     }
 
@@ -347,33 +387,52 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
     }
 
     *out_handle = dev;
-    ESP_LOGI(TAG, "BSP Audio init OK (%u mics, Fs=%lu Hz, BCLK=%lu Hz, block=%u samp/ch)", (unsigned)cfg->active_mic_count, (unsigned long)cfg->sample_rate_hz, (unsigned long)bsp_get_mic_params(BSP_MIC_TYPE)->bclk_hz, (unsigned)cfg->block_size_samples);
-    return BSP_AUDIO_OK;
+    // ESP_LOGI(TAG, "BSP Audio init OK (%u mics, Fs=%lu Hz, BCLK=%lu Hz, block=%u samp/ch)", (unsigned)cfg->active_mic_count, (unsigned long)cfg->sample_rate_hz, (unsigned long)bsp_get_mic_params(BSP_MIC_TYPE)->bclk_hz, (unsigned)cfg->block_size_samples);
+	ESP_LOGI(TAG, "BSP Audio init OK mic=%s shift=%u (%u mics, Fs=%lu Hz, BCLK=%lu Hz, block=%u samp/ch)", 
+						bsp_mic_type_name(), 
+						(unsigned)bsp_get_mic_params(BSP_MIC_TYPE)->lsb_padding_bits, 
+						(unsigned)cfg->active_mic_count, 
+						(unsigned long)cfg->sample_rate_hz, 
+						(unsigned long)bsp_get_mic_params(BSP_MIC_TYPE)->bclk_hz, 
+						(unsigned)cfg->block_size_samples);
+						
+	return BSP_AUDIO_OK;
 }
 
 bsp_audio_ret_t bsp_audio_start(bsp_audio_handle_t handle)
 {
 	ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "Handle nulo");
-
 	ESP_RETURN_ON_ERROR(i2s_channel_enable(handle->rx_bus0), TAG, "Error start bus 0");
-	bsp_i2s_apply_sph0645_rx_delay(&I2S0);
+	
+	if (BSP_MIC_TYPE == BSP_MIC_SPH0645)
+	{
+		bsp_i2s_apply_sph0645_rx_delay(&I2S0);
+	}
+	
 	if (handle->config.active_mic_count == 4)
 	{
+		vTaskDelay(pdMS_TO_TICKS(10));
 		ESP_RETURN_ON_ERROR(i2s_channel_enable(handle->rx_bus1), TAG, "Error start bus 1");
-		bsp_i2s_apply_sph0645_rx_delay(&I2S1);
+		
+		if (BSP_MIC_TYPE == BSP_MIC_SPH0645)
+		{
+			bsp_i2s_apply_sph0645_rx_delay(&I2S1);
+		}
 	}
 
 	/* Datasheet tPOWERUP: max 50 ms after Fclock >= 1 MHz. */
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	handle->running = true;
-	BaseType_t created = xTaskCreate(bsp_i2s_capture_task, "bsp_i2s_task", 4096, handle, tskIDLE_PRIORITY + 5, &handle->capture_task);
+	BaseType_t created = xTaskCreate(bsp_i2s_capture_task, "bsp_i2s_task", 4096, handle, BSP_CAPTURE_TASK_PRIO, &handle->capture_task);
+	
 	if (created != pdPASS)
 	{
 		ESP_LOGE(TAG, "No se pudo crear bsp_i2s_task");
 		handle->running = false;
 		return BSP_AUDIO_ERROR;
 	}
+	
 	return BSP_AUDIO_OK;
 }
 
