@@ -59,3 +59,6 @@ managed_components/
 dependencies.lock
 .vscode
 .clangd
+tools/.venv/
+tools/__pycache__/
+tools/*.wav
