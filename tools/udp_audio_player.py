@@ -336,8 +336,8 @@ def main() -> int:
                     help="Canales de salida (0 = usar los del paquete)")
     ap.add_argument("--device", type=int, default=None, help="Indice del dispositivo sounddevice (default: Analog/ALC)")
     ap.add_argument("--gain", type=float, default=1.0, help="Ganancia lineal (1.0 = sin amplificar)")
-    ap.add_argument("--channel", type=int, default=-1, choices=(0, 1, -1),
-                    help="Canal: -1=stereo tal cual (default), 0=solo L, 1=solo R")
+    ap.add_argument("--channel", type=int, default=-1, choices=(-1, 0, 1, 2, 3, 99),
+                    help="Canal a escuchar: -1=stereo/directo (default), 0..3=solo mic 0..3, 99=mezcla (downmix de todos a mono)")
     ap.add_argument("--dc-block", action="store_true", help="HPF extra en el player (off por default)")
     ap.add_argument("--speaker-vol", type=int, default=100, help="Volumen %% de salida (default 100)")
     ap.add_argument("--headphones", action="store_true", help="Solo jack de auriculares; mutea parlantes")
@@ -365,7 +365,7 @@ def main() -> int:
     wav: Optional[wave.Wave_write] = None
     wav_ch: Optional[int] = None
     stop = threading.Event()
-    dc_state = [0.0, 0.0, 0.0, 0.0]
+    dc_state = [0.0] * 8
 
     print_local_ips(args.port)
     print(f"Escuchando UDP {args.bind}:{args.port}  rate={args.rate} Hz  gain={args.gain}  channel={args.channel}")
@@ -397,8 +397,24 @@ def main() -> int:
 
             seq, ts_ms, channels, samples_per_ch, frames = parsed
 
-            if frames.shape[1] >= 2 and args.channel in (0, 1):
-                mono = frames[:, args.channel]
+            # Grabacion en WAV del audio original multi-canal antes de cualquier downmix o filtro
+            if args.save:
+                if wav is None:
+                    wav = open_wav(args.save, args.rate, frames.shape[1])
+                    print(f"Grabando {args.save} ({frames.shape[1]} ch crudos)")
+                if frames.shape[1] == wav.getnchannels():
+                    wav.writeframes(frames.tobytes())
+
+            # Seleccion o mezcla de canales para reproduccion / monitoreo
+            if args.channel in (0, 1, 2, 3):
+                if args.channel < frames.shape[1]:
+                    mono = frames[:, args.channel]
+                    frames = np.stack((mono, mono), axis=1)
+                else:
+                    print(f"Advertencia: mic {args.channel} no disponible en stream de {frames.shape[1]} ch", file=sys.stderr)
+            elif args.channel == 99:
+                # Downmix / promedio de todos los canales recibidos
+                mono = frames.mean(axis=1).astype(np.int16)
                 frames = np.stack((mono, mono), axis=1)
 
             if args.dc_block:
@@ -409,7 +425,7 @@ def main() -> int:
             stats.on_ok(seq, len(data), peak, rms)
 
             if player is None and not args.no_play:
-                out_ch = args.play_channels if args.play_channels else min(channels, 2)
+                out_ch = args.play_channels if args.play_channels else min(frames.shape[1], 2)
                 try:
                     dev = pick_output_device(args.device)
                     player = Player(args.rate, out_ch, dev)
@@ -421,14 +437,6 @@ def main() -> int:
 
             if player is not None:
                 player.push(apply_gain(frames, args.gain))
-
-            if args.save:
-                if wav is None:
-                    wav_ch = 2 if frames.ndim == 2 else channels
-                    wav = open_wav(args.save, args.rate, frames.shape[1])
-                    print(f"Grabando {args.save} ({frames.shape[1]} ch)")
-                if frames.shape[1] == wav.getnchannels():
-                    wav.writeframes(frames.tobytes())
 
             now = time.monotonic()
             if now - last_stats >= args.stats_s:

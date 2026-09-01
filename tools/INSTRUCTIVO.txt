@@ -24,10 +24,10 @@ En Linux hace falta PortAudio:
 -----------------------------------------------------------
 Desde la raiz del proyecto:
 
-    tools/.venv/bin/python tools/udp_audio_player.py --port 5000 --rate 48000 --headphones
+    tools/.venv/bin/python tools/udp_audio_player.py --port 5000 --rate 16000 --headphones
 
     --rate debe coincidir con BSP_SPH0645_SAMPLE_RATE_HZ en bsp_audio.c
-    (hoy 48000; tambien 16000 | 44100).
+    (16000 | 44100 | 48000).
 
 El script va a mostrar algo como:
 
@@ -86,8 +86,14 @@ Otras formas de correrlo:
     # grabar WAV mientras reproduce
     tools/.venv/bin/python tools/udp_audio_player.py --save capture.wav
 
-    # solo recibir / grabar, sin parlantes
-    tools/.venv/bin/python tools/udp_audio_player.py --no-play --save capture.wav
+    # solo recibir / grabar, sin parlantes (guarda todos los canales crudos: 1, 2 o 4)
+    tools/.venv/bin/python tools/udp_audio_player.py --no-play --save capture_4mics.wav
+
+    # escuchar un microfono especifico de los 4 (0=Mic0, 1=Mic1, 2=Mic2, 3=Mic3)
+    tools/.venv/bin/python tools/udp_audio_player.py --channel 2 --headphones
+
+    # mezclar los 4 microfonos a mono en los auriculares
+    tools/.venv/bin/python tools/udp_audio_player.py --channel 99 --headphones
 
 
 Si no llega audio
