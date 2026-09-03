@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import argparse
 import collections
-import fcntl
+import os
 import socket
 import struct
 import subprocess
@@ -157,6 +157,9 @@ def _amixer_card1(*args: str) -> None:
 
 def enable_notebook_speakers(volume_pct: int = 100) -> None:
     """Desmutea Speaker/Master y desactiva Auto-Mute para salir por parlantes."""
+    if os.name == "nt":
+        print("Windows: se usa el volumen y dispositivo configurados en el sistema.")
+        return
     vol = max(5, min(100, int(volume_pct)))
     _amixer_card1("sset", "Auto-Mute Mode", "Disabled")
     _amixer_card1("sset", "Speaker", f"{vol}%", "unmute")
@@ -173,6 +176,9 @@ def enable_notebook_speakers(volume_pct: int = 100) -> None:
 
 def enable_headphones_only(volume_pct: int = 100) -> None:
     """Mutea parlantes y sale solo por el jack de auriculares (ALC233 card 1)."""
+    if os.name == "nt":
+        print("Windows: --headphones no puede mutear otros dispositivos; selecciona la salida con --device.")
+        return
     vol = max(5, min(100, int(volume_pct)))
     _amixer_card1("sset", "Speaker", "0%", "mute")
     _amixer_card1("sset", "Headphone", f"{vol}%", "unmute")
@@ -271,6 +277,20 @@ class Player:
 
 
 def list_local_ipv4() -> list[tuple[str, str]]:
+    if os.name == "nt":
+        found = []
+        seen = set()
+        try:
+            addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+            for address in addresses:
+                ip = address[4][0]
+                if not ip.startswith("127.") and ip not in seen:
+                    seen.add(ip)
+                    found.append(("Windows", ip))
+        except OSError:
+            pass
+        return found
+
     found: list[tuple[str, str]] = []
     for _idx, name in socket.if_nameindex():
         if name == "lo":
@@ -279,7 +299,9 @@ def list_local_ipv4() -> list[tuple[str, str]]:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
                 ifr = struct.pack("256s", name.encode("utf-8")[:15])
-                res = fcntl.ioctl(sock.fileno(), 0x8915, ifr)  # SIOCGIFADDR
+                import fcntl
+
+                res = fcntl.ioctl(sock.fileno(), 0x8915, ifr)
                 ip = socket.inet_ntoa(res[20:24])
                 found.append((name, ip))
             finally:
@@ -340,7 +362,7 @@ def main() -> int:
                     help="Canal a escuchar: -1=stereo/directo (default), 0..3=solo mic 0..3, 99=mezcla (downmix de todos a mono)")
     ap.add_argument("--dc-block", action="store_true", help="HPF extra en el player (off por default)")
     ap.add_argument("--speaker-vol", type=int, default=100, help="Volumen %% de salida (default 100)")
-    ap.add_argument("--headphones", action="store_true", help="Solo jack de auriculares; mutea parlantes")
+    ap.add_argument("--headphones", action="store_true", help="Solo jack de auriculares; en Windows selecciona la salida con --device")
     ap.add_argument("--no-unmute", action="store_true", help="No tocar amixer/wpctl (si ya tenes el mixer como queres)")
     ap.add_argument("--list-devices", action="store_true", help="Listar dispositivos de audio y salir")
     ap.add_argument("--save", default=None, help="Guardar PCM en WAV")

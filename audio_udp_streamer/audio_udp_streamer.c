@@ -120,6 +120,7 @@ static int32_t hpf_process_sample (audio_udp_streamer_handle_t streamer, uint8_t
 
 static int send_udp_payload (audio_udp_streamer_handle_t streamer, size_t packet_len)
 {
+	static TickType_t last_send_error_log;
 	for (int attempt = 0; attempt < AUDIO_UDP_SEND_RETRY_MAX; attempt++)
 	{
 		int sent = (int)sendto(streamer->sock, streamer->tx_buf, packet_len, 0, (struct sockaddr *)&streamer->dest_addr, sizeof(streamer->dest_addr));
@@ -133,6 +134,11 @@ static int send_udp_payload (audio_udp_streamer_handle_t streamer, size_t packet
 			continue;
 		}
 		break;
+	}
+	if ((xTaskGetTickCount() - last_send_error_log) >= pdMS_TO_TICKS(5000))
+	{
+		ESP_LOGW(TAG, "Error enviando UDP: errno=%d (%s), bytes=%u", errno, strerror(errno), (unsigned)packet_len);
+		last_send_error_log = xTaskGetTickCount();
 	}
 
 	return -1;

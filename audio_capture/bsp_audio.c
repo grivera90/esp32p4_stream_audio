@@ -198,6 +198,7 @@ static void bsp_i2s_capture_task (void *arg)
 
 	uint32_t drop_count = 0;
 	TickType_t last_drop_log = xTaskGetTickCount();
+	TickType_t last_read_error_log = xTaskGetTickCount();
 
     while (dev->running) 
 	{
@@ -209,7 +210,7 @@ static void bsp_i2s_capture_task (void *arg)
             err1 = i2s_channel_read(dev->rx_bus1, bus1_raw, bytes_per_bus, &r1, pdMS_TO_TICKS(1000));
         }
 
-        if (err0 == ESP_OK && err1 == ESP_OK && r0 == bytes_per_bus) 
+		if (err0 == ESP_OK && err1 == ESP_OK && r0 == bytes_per_bus && (mics != 4 || r1 == bytes_per_bus)) 
 		{
             bsp_audio_block_t *blk = NULL;
             if (xQueueReceive(dev->free_queue, &blk, pdMS_TO_TICKS(10)) == pdTRUE) 
@@ -246,7 +247,16 @@ static void bsp_i2s_capture_task (void *arg)
 					last_drop_log = now;
 				}
 			}
-        }
+		}
+			else
+			{
+				TickType_t now = xTaskGetTickCount();
+				if ((now - last_read_error_log) >= pdMS_TO_TICKS(BSP_CAPTURE_DROP_LOG_PERIOD_MS))
+				{
+					ESP_LOGW(TAG, "Lectura I2S incompleta: bus0=%s/%u, bus1=%s/%u", esp_err_to_name(err0), (unsigned)r0, esp_err_to_name(err1), (unsigned)r1);
+					last_read_error_log = now;
+				}
+			}
     }
 
     free(bus0_raw);
@@ -341,15 +351,15 @@ bsp_audio_ret_t bsp_audio_init(const bsp_audio_config_t *cfg, bsp_audio_handle_t
 	
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(dev->rx_bus0, &std_cfg0), TAG, "Error std mode I2S 0");
 
-    /* 3. Configurar I2S Bus 1 (Slave Sync) -> Solo si active_mic_count == 4 */
+	/* 3. Configurar I2S Bus 1 como master -> Solo si active_mic_count == 4 */
     if (cfg->active_mic_count == 4) 
 	{
-        i2s_chan_config_t chan_cfg1 = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_SLAVE);
+		i2s_chan_config_t chan_cfg1 = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
         ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg1, NULL, &dev->rx_bus1), TAG, "Error I2S 1");
 
         i2s_std_config_t std_cfg1 = 
 		{
-            .clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz, I2S_ROLE_SLAVE),
+			.clk_cfg = bsp_clk_cfg_for_mic(cfg->sample_rate_hz, I2S_ROLE_MASTER),
             .slot_cfg = bsp_slot_cfg_for_mic(),
             .gpio_cfg = 
 			{

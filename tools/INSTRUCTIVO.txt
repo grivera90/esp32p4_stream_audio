@@ -12,19 +12,22 @@ Al arrancar imprime las IPv4 locales para copiarlas en dest_ip del ESP.
 ----------------------------
 Desde la raiz del proyecto:
 
-    python3 -m venv tools/.venv
-    tools/.venv/bin/pip install -r tools/requirements.txt
+    python -m venv tools/.venv
+    tools\.venv\Scripts\python -m pip install -r tools\requirements.txt
 
 En Linux hace falta PortAudio:
 
     sudo apt install libportaudio2
+
+En Windows, `sounddevice` instala PortAudio automáticamente. La salida se
+elige en la configuración de sonido de Windows o con `--device`.
 
 
 2. Arrancar el receptor ANTES de flashear / resetear el ESP
 -----------------------------------------------------------
 Desde la raiz del proyecto:
 
-    tools/.venv/bin/python tools/udp_audio_player.py --port 5000 --rate 16000 --headphones
+    tools\.venv\Scripts\python tools\udp_audio_player.py --port 5000 --rate 16000 --headphones
 
     --rate debe coincidir con BSP_SPH0645_SAMPLE_RATE_HZ en bsp_audio.c
     (16000 | 44100 | 48000).
@@ -78,22 +81,22 @@ Cuando llegan paquetes el script imprime stats cada ~2 s:
 Otras formas de correrlo:
 
     # listar salidas de audio
-    tools/.venv/bin/python tools/udp_audio_player.py --list-devices
+    tools\.venv\Scripts\python tools\udp_audio_player.py --list-devices
 
     # forzar un dispositivo (ej. analogico ALC233)
-    tools/.venv/bin/python tools/udp_audio_player.py --device 4
+    tools\.venv\Scripts\python tools\udp_audio_player.py --device 4
 
     # grabar WAV mientras reproduce
-    tools/.venv/bin/python tools/udp_audio_player.py --save capture.wav
+    tools\.venv\Scripts\python tools\udp_audio_player.py --save capture.wav
 
     # solo recibir / grabar, sin parlantes (guarda todos los canales crudos: 1, 2 o 4)
-    tools/.venv/bin/python tools/udp_audio_player.py --no-play --save capture_4mics.wav
+    tools\.venv\Scripts\python tools\udp_audio_player.py --no-play --save capture_4mics.wav
 
     # escuchar un microfono especifico de los 4 (0=Mic0, 1=Mic1, 2=Mic2, 3=Mic3)
-    tools/.venv/bin/python tools/udp_audio_player.py --channel 2 --headphones
+    tools\.venv\Scripts\python tools\udp_audio_player.py --channel 2 --headphones
 
     # mezclar los 4 microfonos a mono en los auriculares
-    tools/.venv/bin/python tools/udp_audio_player.py --channel 99 --headphones
+    tools\.venv\Scripts\python tools\udp_audio_player.py --channel 99 --headphones
 
 
 Si no llega audio

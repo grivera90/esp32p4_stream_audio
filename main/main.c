@@ -65,7 +65,7 @@ void app_main(void)
 
 	audio_udp_streamer_config_t streamer_cfg = 
     {
-		.dest_ip = "192.168.100.68",
+		.dest_ip = "192.168.100.182",
 		.dest_port = 5000,
 		.audio_bsp = audio_bsp,
 		.channels = audio_cfg.active_mic_count,
